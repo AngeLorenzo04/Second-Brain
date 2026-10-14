@@ -1,0 +1,407 @@
+{
+  "id": "JoCpc5MdnB34L7pe",
+  "name": "01 - [CORE] Universal Ingestion & Distillation Engine",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "trigger-subworkflow",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      { \"property\": \"Status\", \"status\": { \"does_not_equal\": \"Done\" } },\n      { \"property\": \"Status\", \"status\": { \"does_not_equal\": \"Cancelled\" } }\n    ]\n  },\n  \"page_size\": 50\n}",
+        "options": {}
+      },
+      "id": "query-existing-tasks",
+      "name": "Query Active Tasks for Deduplication",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizza i dati e prepara il prompt con la lista dei task attivi per deduplicazione semantica\nconst input = $('Execute Workflow Trigger').first().json;\nconst existingTasksRaw = $json.results || [];\n\nconst existingTasks = existingTasksRaw.map(t => ({\n  id: t.id,\n  task_name: t.properties['Task Name']?.title[0]?.plain_text || 'Senza nome',\n  due_date: t.properties['Due Date']?.date?.start || null\n}));\n\nconst meta = input.meta || {\n  source: 'Manual',\n  source_id: 'man_' + Date.now(),\n  source_url: '',\n  timestamp: new Date().toISOString()\n};\n\nconst payload = input.payload || {\n  title_hint: '',\n  raw_content: String(input.text || input.content || JSON.stringify(input)),\n  content_type: 'text',\n  author_sender: 'Self'\n};\n\nconst prompt = `Analizza il seguente contenuto per il Second Brain (metodologia CODE e framework PARA).\n\nCONTENUTO DA ANALIZZARE:\n\"\"\"\n${payload.raw_content}\n\"\"\"\nMETADATI:\n- Fonte: ${meta.source}\n- Autore: ${payload.author_sender || 'N/A'}\n- Hint: ${payload.title_hint || 'Nessuno'}\n\nTASK ATTUALMENTE APERTI SU NOTION (Verifica duplicati semantici):\n${JSON.stringify(existingTasks, null, 2)}\n\nREGOLE DEDUPLICAZIONE SEMANTICA:\nSe il contenuto esprime un'azione/task, confrontalo con l'elenco dei TASK ATTUALMENTE APERTI.\nSe l'azione proposta esprime la STESSA IDENTICA COSA o OBIETTIVO di un task già esistente (anche se formulata con sinonimi, perifrasi o parole diverse, ad esempio: \"leggere capitolo 4\" vs \"leggere il capitolo dopo il 3\"), imposta \"is_duplicate\": true e indica in \"duplicate_of\" il nome esatto del task esistente.\nSe invece è un'azione nuova o diversa, imposta \"is_duplicate\": false.\n\nRISPONDI ESCLUSIVAMENTE con un JSON con questa struttura esatta:\n{\n  \"title\": \"Titolo chiaro e sintetico (max 8 parole)\",\n  \"summary\": \"Sintesi distillata a bullet points\",\n  \"para_category\": \"Project\" | \"Area\" | \"Resource\" | \"Task\" | \"None\",\n  \"tasks\": [\n    {\n      \"task_name\": \"Verbo all'infinito + azione concreta\",\n      \"due_date\": \"YYYY-MM-DD oppure null\",\n      \"is_duplicate\": true | false,\n      \"duplicate_of\": \"Nome esatto del task esistente se duplicato, altrimenti null\"\n    }\n  ],\n  \"resource\": {\n    \"is_resource\": true | false,\n    \"type\": \"GitHub Repo\" | \"Article / Post\" | \"Paper\" | \"Tool / Lib\" | \"Snippet\" | \"Documentation\",\n    \"tags\": [\"tag1\", \"tag2\"]\n  }\n}`;\n\nreturn {\n  json: {\n    meta,\n    payload,\n    prompt,\n    existing_tasks_count: existingTasks.length\n  }\n};"
+      },
+      "id": "prepare-prompt",
+      "name": "Prepare LLM Prompt with Deduplication",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AQ.Ab8RN6KjHBG84SxbIQrjkJqj8i_Xdw3o_-wkY4kZ-zw-oLMr3w",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.prompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"response_mime_type\": \"application/json\",\n    \"temperature\": 0.2\n  }\n}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "id": "gemini-distillation",
+      "name": "Gemini Distillation & Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Estrae la risposta di Gemini e crea il body esatto per Notion Inbox\nconst geminiResponse = $json;\nconst prep = $('Prepare LLM Prompt with Deduplication').first().json;\n\nlet parsed = {};\ntry {\n  const rawText = geminiResponse.candidates[0].content.parts[0].text;\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    title: prep.payload.title_hint || 'Nota catturata',\n    summary: prep.payload.raw_content.slice(0, 300),\n    para_category: 'None',\n    tasks: [],\n    resource: { is_resource: false, type: 'Article / Post', tags: [] }\n  };\n}\n\n// Costruzione payload esatto conforme allo schema reale di Notion Inbox\nconst notion_inbox_body = {\n  parent: { database_id: '3f5959844ee4806aa5acc90bbcf6066a' },\n  properties: {\n    'Name': {\n      title: [{ text: { content: (parsed.title || prep.payload.title_hint || 'Nuova Nota').slice(0, 200) } }]\n    },\n    'Status': {\n      status: { name: 'Inbox' }\n    },\n    'Source': {\n      select: { name: ['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook', 'Telegram Voice', 'Telegram Text'].includes(prep.meta.source) ? prep.meta.source : 'Manual' }\n    },\n    'Source ID': {\n      rich_text: [{ text: { content: String(prep.meta.source_id || '') } }]\n    },\n    'PARA Routing': {\n      select: { name: ['None', 'Task', 'Resource', 'Area', 'Project'].includes(parsed.para_category) ? parsed.para_category : 'None' }\n    },\n    'Raw Content': {\n      rich_text: [{ text: { content: String(prep.payload.raw_content || '').slice(0, 1990) } }]\n    },\n    'AI Summary': {\n      rich_text: [{ text: { content: String(parsed.summary || '').slice(0, 1990) } }]\n    },\n    'Captured At': {\n      date: { start: prep.meta.timestamp ? prep.meta.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10) }\n    }\n  }\n};\n\nif (prep.meta.source_url) {\n  notion_inbox_body.properties['Source URL'] = { url: prep.meta.source_url };\n}\n\nreturn {\n  json: {\n    meta: prep.meta,\n    payload: prep.payload,\n    distilled: parsed,\n    notion_inbox_body\n  }\n};"
+      },
+      "id": "parse-gemini",
+      "name": "Parse & Validate JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notion_inbox_body) }}",
+        "options": {}
+      },
+      "id": "create-inbox-page",
+      "name": "Notion - Save to Inbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Estrae Tasks (filtrando i duplicati) e Resources\nconst inboxPageId = $json.id;\nconst parsed = $('Parse & Validate JSON').first().json;\n\nconst items = [];\n\nif (parsed.distilled.tasks && Array.isArray(parsed.distilled.tasks)) {\n  for (const t of parsed.distilled.tasks) {\n    if (t.is_duplicate) {\n      continue;\n    }\n\n    const taskSource = (parsed.meta.source && parsed.meta.source.startsWith('Telegram')) ? 'Telegram' : (['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook'].includes(parsed.meta.source) ? parsed.meta.source : 'Manual');\n    const taskBody = {\n      parent: { database_id: '3f5959844ee480fd9b5ee84b16b89cd6' },\n      properties: {\n        'Task Name': {\n          title: [{ text: { content: t.task_name.slice(0, 200) } }]\n        },\n        'Status': {\n          status: { name: 'To Do' }\n        },\n        'Source': {\n          select: { name: taskSource }\n        },\n        'Source Ref': {\n          rich_text: [{ text: { content: String(parsed.meta.source_id || '') } }]\n        }\n      }\n    };\n    if (t.due_date && /^\\d{4}-\\d{2}-\\d{2}/.test(t.due_date)) {\n      taskBody.properties['Due Date'] = { date: { start: t.due_date } };\n    }\n    items.push({\n      entity_type: 'task',\n      body: taskBody\n    });\n  }\n}\n\nif (parsed.distilled.resource && parsed.distilled.resource.is_resource) {\n  const resBody = {\n    parent: { database_id: '3f5959844ee480179484cb34a9e09435' },\n    properties: {\n      'Title': {\n        title: [{ text: { content: parsed.distilled.title.slice(0, 200) } }]\n      },\n      'Type': {\n        select: { name: parsed.distilled.resource.type || 'Article / Post' }\n      },\n      'Summary / Notes': {\n        rich_text: [{ text: { content: String(parsed.distilled.summary || '').slice(0, 1990) } }]\n      }\n    }\n  };\n  if (parsed.meta.source_url) {\n    resBody.properties['URL'] = { url: parsed.meta.source_url };\n  }\n  if (parsed.distilled.resource.tags && Array.isArray(parsed.distilled.resource.tags)) {\n    resBody.properties['Tags'] = {\n      multi_select: parsed.distilled.resource.tags.map(tag => ({ name: String(tag) }))\n    };\n  }\n  items.push({\n    entity_type: 'resource',\n    body: resBody\n  });\n}\n\nif (items.length === 0) {\n  return [{ json: { status: 'no_child_entities', inbox_id: inboxPageId } }];\n}\n\nreturn items.map(i => ({ json: i }));"
+      },
+      "id": "split-entities",
+      "name": "Extract Tasks & Resources (Skip Duplicates)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.entity_type }}",
+                    "rightValue": "task",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.entity_type }}",
+                    "rightValue": "resource",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-entity-type",
+      "name": "Switch Entity Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.1,
+      "position": [
+        1740,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "create-task-page",
+      "name": "Notion - Create Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "create-resource-page",
+      "name": "Notion - Create Resource",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Genera il feedback dettagliato per Telegram distinguendo nuovi task e duplicati evitati\nconst parsed = $('Parse & Validate JSON').first().json;\nconst inboxPage = $('Notion - Save to Inbox').first().json;\n\nconst newTasks = [];\nconst duplicates = [];\n\nif (parsed.distilled.tasks && Array.isArray(parsed.distilled.tasks)) {\n  for (const t of parsed.distilled.tasks) {\n    if (t.is_duplicate) {\n      duplicates.push(t);\n    } else {\n      newTasks.push(t);\n    }\n  }\n}\n\nlet feedback = `🧠 *Second Brain Aggiornato!*\\n\\n📌 *Nota:* ${parsed.distilled.title}`;\n\nif (newTasks.length > 0) {\n  feedback += `\\n\\n✅ *Nuovo Task aggiunto:*\\n` + newTasks.map(t => `• ${t.task_name}${t.due_date ? ` (📅 ${t.due_date})` : ''}`).join('\\n');\n}\n\nif (duplicates.length > 0) {\n  feedback += `\\n\\n⚠️ *Task già presente (duplicato evitato):*\\n` + duplicates.map(d => `• L'azione corrisponde a: *\"${d.duplicate_of || d.task_name}\"*`).join('\\n');\n}\n\nif (parsed.distilled.resource && parsed.distilled.resource.is_resource) {\n  feedback += `\\n\\n📚 *Risorsa aggiunta:* ${parsed.distilled.title}`;\n}\n\nreturn {\n  json: {\n    status: 'success',\n    inbox_id: inboxPage.id,\n    title: parsed.distilled.title,\n    new_tasks_count: newTasks.length,\n    duplicates_count: duplicates.length,\n    feedback_message: feedback\n  }\n};"
+      },
+      "id": "build-dynamic-feedback",
+      "name": "Build Detailed Feedback for Caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Query Active Tasks for Deduplication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Active Tasks for Deduplication": {
+      "main": [
+        [
+          {
+            "node": "Prepare LLM Prompt with Deduplication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare LLM Prompt with Deduplication": {
+      "main": [
+        [
+          {
+            "node": "Gemini Distillation & Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Distillation & Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate JSON": {
+      "main": [
+        [
+          {
+            "node": "Notion - Save to Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Save to Inbox": {
+      "main": [
+        [
+          {
+            "node": "Extract Tasks & Resources (Skip Duplicates)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Detailed Feedback for Caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tasks & Resources (Skip Duplicates)": {
+      "main": [
+        [
+          {
+            "node": "Switch Entity Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Entity Type": {
+      "main": [
+        [
+          {
+            "node": "Notion - Create Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion - Create Resource",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": {},
+  "pinData": {}
+}

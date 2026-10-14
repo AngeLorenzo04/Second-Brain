@@ -1,0 +1,1371 @@
+{
+  "id": "6qVfQfqWC337JhCI",
+  "name": "02 - [LOCAL POLLING] Telegram Smart Capture & Bidirectional Agent",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/getUpdates?limit=5&allowed_updates=[\"message\",\"callback_query\"]",
+        "options": {}
+      },
+      "id": "fetch-telegram-updates",
+      "name": "Fetch Telegram Messages & Callbacks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const updates = $json.result || [];\nif (updates.length === 0) {\n  return [];\n}\n\nconst items = [];\n\nfor (const u of updates) {\n  // 1. Gestione Callback Query (Click su pulsante 'Segna come completato')\n  if (u.callback_query && String(u.callback_query.from.id) === '5194909203') {\n    const cb = u.callback_query;\n    const data = cb.data || '';\n    if (data.startsWith('done:')) {\n      const pageId = data.replace('done:', '');\n      items.push({\n        json: {\n          update_id: u.update_id,\n          is_callback: true,\n          mode: 'callback_done',\n          callback_query_id: cb.id,\n          chat_id: cb.message?.chat?.id || 5194909203,\n          message_id: cb.message?.message_id,\n          original_text: cb.message?.text || '',\n          page_id: pageId,\n          date: new Date().toISOString()\n        }\n      });\n    }\n    continue;\n  }\n\n  // 2. Gestione Messaggi di testo o vocali\n  if (u.message && String(u.message.from.id) === '5194909203') {\n    const msg = u.message;\n    const rawText = (msg.text || msg.caption || '').trim();\n    const cleanText = rawText.replace(/^[\\\"'*`«»\\s]+|[\\\"'*`«»\\s]+$/g, '').trim();\n    const isVoice = Boolean(msg.voice || msg.audio);\n\n    if (isVoice) {\n      items.push({\n        json: {\n          update_id: u.update_id,\n          is_callback: false,\n          mode: 'capture_voice',\n          chat_id: msg.chat.id,\n          message_id: msg.message_id,\n          text: cleanText,\n          raw_text: rawText,\n          date: new Date(msg.date * 1000).toISOString()\n        }\n      });\n      continue;\n    }\n\n    const todayIso = new Date().toISOString().slice(0, 10);\n    const optionsDate = { timeZone: 'Europe/Rome', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };\n    const todayFormatted = new Date().toLocaleDateString('it-IT', optionsDate);\n\n    const gemini_prompt = `Sei il router semantico del Second Brain di Angelo.\nCONTESTO ATTUALE:\n- Data odierna di riferimento: ${todayFormatted} (${todayIso})\n- Fuso orario: Europe/Rome\n\nAnalizza il messaggio dell'utente ed estrai le intenzioni e i parametri in un JSON valido.\n\nPossibili intenti:\n- TASK_ACTION: L'utente vuole completare, annullare, cancellare, chiudere, o impostare/aggiornare la scadenza (deadline) di task esistenti su Notion.\n  * Esempi: \"completa 1\", \"fatto task 2\", \"cancella task redes\", \"segna le task di sistemi operativi come cancelled\", \"imposta a queste attività la deadline per il 20 ottobre 1. Sostituire... 2. Gestire...\", \"sposta la scadenza a venerdì\".\n- ADD_CALENDAR: L'utente vuole aggiungere o fissare un evento, impegno, lezione, riunione o promemoria su Google Calendar (es: \"aggiungi evento domani alle 10\", \"ricordami di...\").\n- QUERY_AGENT: L'utente fa domande sul proprio programma, agenda, impegni di oggi/domani, orari, task aperti o risorse (es: \"cosa ho da fare oggi?\", \"mostrami le task\", \"trovami le note\").\n- CAPTURE_NOTE: L'utente scrive una nuova nota, appunto, idea, link o un nuovo task da creare da zero (es: \"comprare il latte\", \"idea: nuovo sito\").\n\nFormato JSON atteso:\n{\n  \"intent\": \"TASK_ACTION\" | \"ADD_CALENDAR\" | \"QUERY_AGENT\" | \"CAPTURE_NOTE\",\n  \"action\": \"COMPLETE\" | \"CANCEL\" | \"SET_DEADLINE\" | \"UPDATE_STATUS\" | \"UPDATE_BOTH\" | null,\n  \"due_date\": \"YYYY-MM-DD\" | null,\n  \"target_status\": \"Done\" | \"Cancelled\" | \"In progress\" | null,\n  \"target_titles\": [\"titolo o porzione di titolo task 1\", \"titolo task 2\", ...] | [],\n  \"target_indices\": [1, 2, ...] | []\n}\n\nNota per target_status: impostalo SOLO se l'utente ha chiesto esplicitamente di cambiare stato (es. fatto, completato, cancellato, annullato). Se chiede SOLO di impostare o spostare la scadenza/deadline, target_status DEVE essere null.\n\nMessaggio utente:\n\\\"${cleanText}\\\"`;\n\n    items.push({\n      json: {\n        update_id: u.update_id,\n        is_callback: false,\n        gemini_prompt,\n        chat_id: msg.chat.id,\n        message_id: msg.message_id,\n        clean_text: cleanText,\n        raw_text: rawText,\n        date: new Date(msg.date * 1000).toISOString()\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "id": "filter-and-detect-intent",
+      "name": "Filter Security & Prepare Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/getUpdates?offset={{ $json.update_id + 1 }}&limit=1",
+        "options": {}
+      },
+      "id": "ack-telegram-update",
+      "name": "Confirm Telegram Read (Ack)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        864,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "query_agent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "capture_text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "callback_done",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "complete_task_text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mode }}",
+                    "rightValue": "add_calendar_event",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-intent",
+      "name": "Switch Workflow Mode",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.1,
+      "position": [
+        1536,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"property\": \"Status\",\n    \"status\": {\n      \"does_not_equal\": \"Done\"\n    }\n  },\n  \"page_size\": 15\n}",
+        "options": {}
+      },
+      "id": "query-notion-tasks",
+      "name": "Query Active Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3f5959844ee480179484cb34a9e09435/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"page_size\": 10\n}",
+        "options": {}
+      },
+      "id": "query-notion-resources",
+      "name": "Query Recent Resources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = ($('Apply Semantic Intent').first() ? $('Apply Semantic Intent') : $('Filter Security & Prepare Updates')).item.json.text;\nconst tasksRaw = $('Query Active Tasks').first().json.results || [];\nconst resRaw = $('Query Recent Resources').first().json.results || [];\n\n// 1. Estrazione Eventi Google Calendar\nlet calRaw = [];\ntry {\n  calRaw = $('Get Calendar Events for Agenda').all() || [];\n} catch (e) {\n  calRaw = [];\n}\n\nconst calendarEvents = [];\nfor (const e of calRaw) {\n  const j = e.json || {};\n  if (!j.summary) continue;\n  calendarEvents.push({\n    titolo: j.summary,\n    inizio: j.start?.dateTime || j.start?.date || 'N/A',\n    fine: j.end?.dateTime || j.end?.date || 'N/A',\n    luogo: j.location || '',\n    note: (j.description || '').slice(0, 150)\n  });\n}\n\n// 2. Estrazione Task Notion\nconst tasks = tasksRaw.map((t, idx) => ({\n  numero: idx + 1,\n  id: t.id,\n  nome: t.properties['Task Name']?.title[0]?.plain_text || 'Senza nome',\n  scadenza: t.properties['Due Date']?.date?.start || 'Nessuna',\n  priorita: t.properties['Priority']?.select?.name || 'P3 - Normal',\n  stato: t.properties['Status']?.status?.name || 'To Do'\n}));\n\n// 3. Estrazione Risorse Notion\nconst resources = resRaw.map(r => ({\n  titolo: r.properties['Title']?.title[0]?.plain_text || 'Senza titolo',\n  url: r.properties['URL']?.url || '',\n  tipo: r.properties['Type']?.select?.name || 'Risorsa',\n  summary: r.properties['Summary / Notes']?.rich_text[0]?.plain_text || ''\n}));\n\n// 4. Costruzione Inline Keyboard per completamento rapido dei task\nconst inline_keyboard = [];\nif (tasksRaw.length > 0) {\n  for (let i = 0; i < Math.min(tasksRaw.length, 5); i++) {\n    const t = tasksRaw[i];\n    const pageId = t.id.replace(/-/g, '');\n    const title = t.properties['Task Name']?.title[0]?.plain_text || `Task ${i + 1}`;\n    inline_keyboard.push([\n      {\n        text: `✅ ${i + 1}. Segna come fatto: ${title.slice(0, 26)}`,\n        callback_data: `done:${pageId}`\n      }\n    ]);\n  }\n}\n\nconst todayDateStr = new Date().toLocaleDateString('it-IT', { \n  timeZone: 'Europe/Rome', \n  weekday: 'long', \n  year: 'numeric', \n  month: 'long', \n  day: 'numeric' \n});\n\nconst prompt = `Sei l'assistente Second Brain personale dell'utente (Angelo). Rispondi alla domanda in modo chiaro, empatico, amichevole e proattivo, usando un layout elegante con emoji e Markdown pulito per Telegram.\n\nOGGI È: ${todayDateStr}.\nDATA E ORA ATTUALE (ISO): ${new Date().toISOString()}\n\nDOMANDA UTENTE:\n\"${query}\"\n\n📅 IMPEGNI & EVENTI GOOGLE CALENDAR (Oggi e prossimi giorni):\n${JSON.stringify(calendarEvents, null, 2)}\n\n📋 TASK ATTIVI DA NOTION (Numerati da 1 a N):\n${JSON.stringify(tasks, null, 2)}\n\n📚 RISORSE RECENTI DA NOTION:\n${JSON.stringify(resources, null, 2)}\n\nISTRUZIONI DI FORMATTAZIONE PER TELEGRAM:\n1. Se l'utente chiede cosa ha da fare oggi / nella giornata / i suoi impegni / orario / agenda:\n   - Fornisci una panoramica completa divisa chiaramente in due sezioni:\n     📅 **I tuoi impegni di oggi in Calendario:**\n     (Elenca le lezioni o gli appuntamenti con orari formattati in modo chiaro, es: \"• 09:00 - 11:00: Redes de computadores (Aula 1.02)\". Se non ci sono impegni in calendario per oggi, scrivi \"Nessun impegno in calendario per oggi 🏖️\").\n     \n     📋 **I tuoi task da fare (Notion):**\n     (Elenca i task numerati chiaramente 1, 2, 3... con scadenza e priorità. Ricorda che sotto troverà i comodi pulsanti rapidi per segnarli come completati, oppure può scrivere direttamente \"completa 1\" o \"fatto 2\"!).\n2. Se l'utente chiede informazioni su un altro giorno (es. \"domani\", \"venerdì\"), focalizza la risposta su quella specifica giornata.\n3. Se l'utente fa una domanda specifica (su appunti, risorse o task), rispondi direttamente alla sua richiesta.\n4. Mantieni sempre uno stile energico, motivante e da assistente Second Brain premium.`;\n\nreturn { \n  json: { \n    prompt, \n    chat_id: 5194909203,\n    reply_markup: inline_keyboard.length > 0 ? { inline_keyboard } : { inline_keyboard: [] }\n  } \n};"
+      },
+      "id": "build-agent-context",
+      "name": "Format Agent Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AQ.Ab8RN6KjHBG84SxbIQrjkJqj8i_Xdw3o_-wkY4kZ-zw-oLMr3w",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [{ \"text\": {{ JSON.stringify($json.prompt) }} }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "id": "gemini-agent-reply",
+      "name": "Gemini Answer Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify($json.clean_text) }},\n  \"parse_mode\": \"Markdown\",\n  \"reply_markup\": {{ JSON.stringify($json.reply_markup || { \"inline_keyboard\": [] }) }}\n}",
+        "options": {}
+      },
+      "id": "reply-telegram-agent",
+      "name": "Send Bot Answer to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2448,
+        160
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nreturn {\n  json: {\n    meta: {\n      source: 'Telegram Text',\n      source_id: 'tg_' + item.message_id,\n      source_url: null,\n      timestamp: item.date\n    },\n    payload: {\n      title_hint: '',\n      raw_content: item.text,\n      content_type: 'text',\n      author_sender: 'Angelo'\n    }\n  }\n};"
+      },
+      "id": "prepare-universal-text",
+      "name": "Normalize to Canonical Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JoCpc5MdnB34L7pe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/JoCpc5MdnB34L7pe",
+          "cachedResultName": "01 - [CORE] Universal Ingestion & Distillation Engine"
+        },
+        "options": {}
+      },
+      "id": "call-core-subworkflow",
+      "name": "Call Core Ingestion Engine",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify($json.feedback_message || \"🧠 *Second Brain Aggiornato!*\\nContenuto archiviato in Inbox.\") }},\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "confirm-telegram-capture",
+      "name": "Confirm Capture to User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.page_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"Status\": {\n      \"status\": {\n        \"name\": \"Done\"\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "update-notion-done",
+      "name": "Notion - Update Status to Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/editMessageText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ $('Filter Security & Prepare Updates').item.json.chat_id }},\n  \"message_id\": {{ $('Filter Security & Prepare Updates').item.json.message_id }},\n  \"text\": {{ JSON.stringify($('Filter Security & Prepare Updates').item.json.original_text.replace(/\\n\\n✅.*$/g, '') + \"\\n\\n✅ COMPLETATO E AGGIORNATO SU NOTION 🎉\") }},\n  \"reply_markup\": { \"inline_keyboard\": [] }\n}",
+        "options": {}
+      },
+      "id": "edit-telegram-card",
+      "name": "Edit Telegram Card (Remove Button)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        720
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/answerCallbackQuery",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"callback_query_id\": {{ JSON.stringify($('Filter Security & Prepare Updates').item.json.callback_query_id) }},\n  \"text\": \"✅ Task segnato come completato su Notion! 🎉\",\n  \"show_alert\": true\n}",
+        "options": {}
+      },
+      "id": "ack-telegram-callback",
+      "name": "Answer Callback Query (Toast Alert)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        720
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      { \"property\": \"Status\", \"status\": { \"does_not_equal\": \"Done\" } },\n      { \"property\": \"Status\", \"status\": { \"does_not_equal\": \"Cancelled\" } }\n    ]\n  },\n  \"page_size\": 100\n}",
+        "options": {}
+      },
+      "id": "query-tasks-for-complete",
+      "name": "Query Tasks for Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let item = {};\ntry {\n  item = $('Apply Semantic Intent').item.json;\n} catch (e) {\n  item = $json;\n}\n\nconst rawText = (item.raw_text || item.text || '').trim();\nconst tasksRaw = $json.results || [];\n\nconst action = item.action || 'UPDATE_STATUS';\nconst targetTitles = item.target_titles || [];\nconst targetIndices = item.target_indices || [];\nlet targetStatus = item.target_status;\nconst dueDate = item.due_date;\n\n// Se non è specificata né scadenza né status, deduci se è completamento o annullamento\nif (!targetStatus && !dueDate) {\n  if (/(cancell|elimin|annull|archiv|rimuov|scart)/i.test(rawText) || /\\bcancelled\\b/i.test(rawText)) {\n    targetStatus = 'Cancelled';\n  } else if (/(in corso|in progress)/i.test(rawText)) {\n    targetStatus = 'In progress';\n  } else {\n    targetStatus = 'Done';\n  }\n}\n\n// 1. Identificazione dei task target\nlet matchedTasks = [];\n\n// A) Match prioritario tramite titoli / parole chiave (molto più specifico se l'utente ha incollato o menzionato i nomi)\nif (targetTitles.length > 0) {\n  for (const qTitle of targetTitles) {\n    const qLower = qTitle.toLowerCase().trim();\n    if (qLower.length < 3) continue;\n\n    // Cerca nei task di Notion\n    const found = tasksRaw.find(t => {\n      const tName = (t.properties['Task Name']?.title?.[0]?.plain_text || '').toLowerCase();\n      // Match per contenimento o stemming\n      if (tName.includes(qLower) || qLower.includes(tName)) return true;\n      const tokens = qLower.split(/\\s+/).filter(w => w.length >= 4);\n      return tokens.length > 0 && tokens.every(tok => tName.includes(tok));\n    });\n\n    if (found && !matchedTasks.some(m => m.id === found.id)) {\n      matchedTasks.push(found);\n    }\n  }\n}\n\n// B) Se nessun titolo ha fatto match, usa gli indici numerici (es: [1, 2, 3])\nif (matchedTasks.length === 0 && targetIndices.length > 0) {\n  for (const idxNum of targetIndices) {\n    const idx = parseInt(idxNum, 10) - 1;\n    if (idx >= 0 && idx < tasksRaw.length) {\n      const t = tasksRaw[idx];\n      if (!matchedTasks.some(m => m.id === t.id)) {\n        matchedTasks.push(t);\n      }\n    }\n  }\n}\n\n// C) Fallback: se nessun match, controlla parole del rawText\nif (matchedTasks.length === 0) {\n  let q = rawText.toLowerCase();\n  q = q.replace(/\\b(segna|metti|imposta|completa|fatto|chiudi|cancella|elimina|annulla|archivia|rimuovi|deadline|scadenza)\\b/gi, ' ');\n  q = q.replace(/\\b(le|la|il|lo|i|gli|del|della|dello|dei|degli|di|da|un|una|uno)\\b/gi, ' ');\n  q = q.replace(/\\b(task|tasks|compit[oi]|attivit[àa]|corso|cosrso|materia)\\b/gi, ' ');\n  q = q.replace(/[^a-z0-9\\s]/gi, ' ').trim();\n\n  const tokens = q.split(/\\s+/).filter(w => w.length >= 3);\n  if (tokens.length > 0) {\n    matchedTasks = tasksRaw.filter(t => {\n      const tName = (t.properties['Task Name']?.title?.[0]?.plain_text || '').toLowerCase();\n      return tokens.every(tok => {\n        const stem = tok.length >= 5 ? tok.slice(0, 5) : tok.length >= 4 ? tok.slice(0, 4) : tok;\n        return tName.includes(tok) || tName.includes(stem);\n      });\n    });\n  }\n}\n\nif (matchedTasks.length === 0) {\n  return [{\n    json: {\n      found: false,\n      chat_id: 5194909203,\n      message: `⚠️ Non ho trovato task corrispondenti tra quelli aperti.\\nScrivi *\\\"Mostrami le task\\\"* per vedere la lista aggiornata!`\n    }\n  }];\n}\n\n// Costruzione proprietà Notion da aggiornare\nconst notionProperties = {};\nif (targetStatus) {\n  notionProperties['Status'] = { status: { name: targetStatus } };\n}\nif (dueDate) {\n  notionProperties['Due Date'] = { date: { start: dueDate } };\n}\n\nreturn matchedTasks.map(t => ({\n  json: {\n    found: true,\n    page_id: t.id,\n    task_title: t.properties['Task Name']?.title?.[0]?.plain_text || 'Senza titolo',\n    action_type: action,\n    target_status: targetStatus,\n    due_date: dueDate,\n    notion_properties: notionProperties,\n    chat_id: 5194909203\n  }\n}));"
+      },
+      "id": "resolve-task-match",
+      "name": "Resolve Task to Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-task-found",
+      "name": "If Task Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.page_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {{ JSON.stringify($json.notion_properties) }}\n}",
+        "options": {}
+      },
+      "id": "update-task-done-by-text",
+      "name": "Notion - Update Task Properties",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "send-text-done-confirmation",
+      "name": "Send Completion Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify($json.message) }},\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "send-text-not-found",
+      "name": "Send Not Found Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "returnAll": true,
+        "options": {
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "id": "gcal-get-events-for-agenda",
+      "name": "Get Calendar Events for Agenda",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        160
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "3R9AtU3D9QyRAf5p",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nconst rawText = item.raw_text || item.text;\nconst now = new Date();\n\nconst options = { timeZone: 'Europe/Rome', weekday: 'long', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };\nconst currentRef = now.toLocaleString('it-IT', options);\nconst currentIso = now.toISOString();\n\nconst prompt = `Sei un parser specializzato per Google Calendar.\nIl tuo compito è estrarre da una richiesta in linguaggio naturale i dati di un evento da inserire in Google Calendar e restituirli ESCLUSIVAMENTE come un oggetto JSON valido.\n\nCONTESTO ATTUALE:\n- Data e ora attuale di riferimento: ${currentRef} (${currentIso})\n- Fuso orario utente: Europe/Rome (UTC+02:00 / CEST).\n- Giorno odierno della settimana: ${now.toLocaleDateString('it-IT', { weekday: 'long', timeZone: 'Europe/Rome' })}.\n\nREGOLE DI ESTRAZIONE:\n1. \"summary\": Titolo chiaro dell'evento. Rimuovi parole superflue come \"aggiungi un evento sul calendario\", \"promemoria per domani\", \"fissa\", virgolette esterne, ecc. Es: \"Comprare il caricabatterie\".\n2. \"start\": Data e ora di inizio in formato ISO 8601 con offset timezone (es: \"2026-10-15T09:00:00+02:00\").\n   - Se l'utente specifica \"tutta la giornata\", \"tutto il giorno\" o non indica un orario specifico, imposta l'inizio alle 09:00:00 del giorno indicato e la fine alle 20:00:00 dello stesso giorno.\n   - Se l'utente specifica un orario (es. \"alle 15:30\" o \"dalle 10 alle 12\"), imposta l'orario di inizio esatto.\n3. \"end\": Data e ora di fine in formato ISO 8601 con offset timezone.\n   - Se non specificato l'orario di fine ma è indicato l'orario di inizio, imposta la fine esattamente 1 ORA DOPO l'inizio.\n4. \"location\": Luogo o aula se menzionato (altrimenti stringa vuota \"\").\n5. \"description\": Note, dettagli aggiuntivi o promemoria menzionati nel testo (altrimenti stringa vuota \"\").\n6. \"colorId\": ID colore Google Calendar (\"1\" lavanda predefinito, \"3\" viola per IA, \"9\" blu per Reti, \"10\" verde per Algoritmi, \"5\" giallo per Web, \"6\" arancione per Diseño, \"11\" rosso fenicottero per cose importanti/urgenti).\n\nRISPONDI ESCLUSIVAMENTE CON IL JSON (senza tag markdown, senza spiegazioni, senza apici).\nFormato atteso:\n{\n  \"summary\": \"...\",\n  \"start\": \"...\",\n  \"end\": \"...\",\n  \"location\": \"...\",\n  \"description\": \"...\",\n  \"colorId\": \"1\"\n}\n\nTESTO UTENTE DA PARSARE:\n\\\"${rawText}\\\"`;\n\nreturn {\n  json: {\n    prompt,\n    chat_id: item.chat_id || 5194909203,\n    original_text: rawText\n  }\n};"
+      },
+      "id": "prepare-gemini-event-prompt",
+      "name": "Prepare Event Parsing Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AQ.Ab8RN6KjHBG84SxbIQrjkJqj8i_Xdw3o_-wkY4kZ-zw-oLMr3w",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [{ \"text\": {{ JSON.stringify($json.prompt) }} }]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "id": "gemini-parse-calendar-event",
+      "name": "Gemini Parse Event Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        1200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\nconst clean = raw.replace(/```json\\s*/gi, '').replace(/```/g, '').trim();\n\nlet parsed = {};\ntry {\n  parsed = JSON.parse(clean);\n} catch (e) {\n  const orig = $('Prepare Event Parsing Prompt').item.json.original_text || 'Nuovo Evento';\n  parsed = {\n    summary: orig,\n    start: new Date(Date.now() + 3600000).toISOString(),\n    end: new Date(Date.now() + 7200000).toISOString(),\n    location: '',\n    description: '',\n    colorId: '1'\n  };\n}\n\nif (!parsed.start) {\n  parsed.start = new Date(Date.now() + 3600000).toISOString();\n}\nif (!parsed.end) {\n  const s = new Date(parsed.start);\n  parsed.end = new Date(s.getTime() + 3600000).toISOString();\n}\n\nreturn {\n  json: {\n    summary: parsed.summary || 'Evento Calendario',\n    start: parsed.start,\n    end: parsed.end,\n    location: parsed.location || '',\n    description: parsed.description || '',\n    colorId: String(parsed.colorId || '1'),\n    chat_id: 5194909203\n  }\n};"
+      },
+      "id": "format-calendar-event-payload",
+      "name": "Format Calendar Event Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "color": "={{ $json.colorId }}",
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location }}",
+          "summary": "={{ $json.summary }}"
+        }
+      },
+      "id": "gcal-insert-user-event",
+      "name": "Google Calendar - Create Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1792,
+        1200
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "3R9AtU3D9QyRAf5p",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ $json.chat_id }},\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "send-telegram-event-confirmation",
+      "name": "Send Event Confirmation to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2224,
+        1200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let text = $json.candidates?.[0]?.content?.parts?.[0]?.text || \"⚠️ Assistente momentaneamente non disponibile, riprova tra poco.\";\n\n// 1. Sostituisci bullet points con asterischi (*   o -   ) con bullet point puliti (• )\ntext = text.replace(/^(\\s*)[*+-]\\s+/gm, '$1• ');\n\n// 2. Normalizza bold markdown standard **testo** in *testo* per Telegram legacy Markdown\ntext = text.replace(/\\*\\*(.*?)\\*\\*/g, '*$1*');\n\n// 3. Rimuovi underscore isolati nei testi per evitare entità corsivo errate in Telegram\ntext = text.replace(/([a-zA-Z0-9])_([a-zA-Z0-9])/g, '$1 $2');\n\n// 4. Bilanciamento asterischi: se il numero di '*' è dispari, rimuovi l'ultimo\nconst starCount = (text.match(/\\*/g) || []).length;\nif (starCount % 2 !== 0) {\n  const lastIndex = text.lastIndexOf('*');\n  text = text.substring(0, lastIndex) + text.substring(lastIndex + 1);\n}\n\n// 5. Bilanciamento underscore: se il numero di '_' è dispari, rimuovili\nconst underCount = (text.match(/_/g) || []).length;\nif (underCount % 2 !== 0) {\n  text = text.replace(/_/g, '');\n}\n\nreturn {\n  json: {\n    clean_text: text,\n    raw_text: $json.candidates?.[0]?.content?.parts?.[0]?.text || \"⚠️ Nessuna risposta generata.\",\n    chat_id: 5194909203,\n    reply_markup: $('Format Agent Context').first().json.reply_markup || { inline_keyboard: [] }\n  }\n};"
+      },
+      "id": "sanitize-telegram-markdown",
+      "name": "Sanitize Agent Markdown for Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify($('Sanitize Agent Markdown for Telegram').first().json.raw_text || \"Ecco la tua risposta.\") }},\n  \"reply_markup\": {{ JSON.stringify($('Sanitize Agent Markdown for Telegram').first().json.reply_markup || { \"inline_keyboard\": [] }) }}\n}",
+        "options": {}
+      },
+      "id": "reply-telegram-agent-fallback",
+      "name": "Send Bot Answer as Plain Text (Fallback)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2672,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ $json.chat_id }},\n  \"text\": {{ JSON.stringify($json.raw_text) }}\n}",
+        "options": {}
+      },
+      "id": "send-event-confirm-fallback",
+      "name": "Send Event Confirmation (Fallback)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2448,
+        1328
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const created = $json;\nlet payload = {};\ntry {\n  payload = $('Format Calendar Event Payload').first().json || {};\n} catch(e) {}\n\nconst summary = created.summary || payload.summary || 'Nuovo Evento';\nconst startRaw = created.start?.dateTime || created.start?.date || payload.start || '';\nconst endRaw = created.end?.dateTime || created.end?.date || payload.end || '';\nconst location = created.location || payload.location || '';\nconst description = created.description || payload.description || '';\n\nlet dateStr = startRaw;\ntry {\n  const d = new Date(startRaw);\n  dateStr = d.toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });\n  if (endRaw) {\n    const dEnd = new Date(endRaw);\n    const endHours = dEnd.toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' });\n    dateStr += ` ➔ ${endHours}`;\n  }\n} catch(e) {}\n\nlet text = `📅 *Evento Salvato in Google Calendar!* 🎉\\n\\n` +\n  `📌 *Titolo:* ${summary}\\n` +\n  `⏰ *Quando:* ${dateStr}\\n`;\n\nif (location) {\n  text += `📍 *Luogo:* ${location}\\n`;\n}\nif (description) {\n  text += `📝 *Note:* ${description}\\n`;\n}\ntext += `\\nL'evento è già attivo e sincronizzato sul tuo Google Calendar! 🚀`;\n\nreturn {\n  json: {\n    chat_id: 5194909203,\n    text: text,\n    raw_text: `📅 Evento Salvato in Google Calendar! 🎉\\n\\nTitolo: ${summary}\\nQuando: ${dateStr}\\n` + (location ? `Luogo: ${location}\\n` : '') + `\\nL'evento è già sincronizzato sul tuo calendario!`,\n    summary: summary\n  }\n};"
+      },
+      "id": "format-event-confirmation-message",
+      "name": "Format Event Confirmation Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "poll-interval",
+      "name": "Every 15 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const first = $('Resolve Task to Complete').first().json;\nconst resolveItems = $('Resolve Task to Complete').all();\nconst titles = resolveItems.map(item => item.json.task_title);\n\nconst targetStatus = first.target_status;\nconst dueDate = first.due_date;\n\nconst nl = String.fromCharCode(10);\nlet text = '';\n\nconst count = titles.length;\nconst isPlural = count > 1;\n\nif (dueDate && targetStatus) {\n  text = '✨ *' + (isPlural ? count + ' Task Aggiornati!' : 'Task Aggiornato!') + '*' + nl;\n  text += '📅 Nuova scadenza: *' + dueDate + '*' + nl;\n  text += '🏷️ Nuovo stato: *' + targetStatus + '*' + nl;\n} else if (dueDate) {\n  text = '📅 *' + (isPlural ? count + ' Scadenze Aggiornate!' : 'Scadenza Aggiornata!') + '*' + nl;\n  text += 'Nuova deadline: *' + dueDate + '*' + nl;\n} else if (targetStatus === 'Cancelled') {\n  text = '🚫 *' + (isPlural ? count + ' Task Annullati!' : 'Task Annullato!') + '*' + nl;\n  text += 'Stato impostato su: *Cancelled*' + nl;\n} else if (targetStatus === 'In progress') {\n  text = '⏳ *' + (isPlural ? count + ' Task In Corso!' : 'Task In Corso!') + '*' + nl;\n  text += 'Stato impostato su: *In progress*' + nl;\n} else {\n  text = '✅ *' + (isPlural ? count + ' Task Completati!' : 'Task Completato!') + '*' + nl;\n  text += 'Segnato come completato su Notion 🎉' + nl;\n}\n\ntext += titles.map(t => '• *\"' + t + '\"*').join(nl);\n\nreturn [{\n  json: {\n    chat_id: 5194909203,\n    text: text\n  }\n}];"
+      },
+      "id": "format-task-update-confirmation",
+      "name": "Format Task Update Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_callback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-callback-query",
+      "name": "If Callback Query",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AQ.Ab8RN6KjHBG84SxbIQrjkJqj8i_Xdw3o_-wkY4kZ-zw-oLMr3w",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [{ \"text\": {{ JSON.stringify($json.gemini_prompt) }} }]\n    }\n  ],\n  \"generationConfig\": {\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "id": "gemini-semantic-router",
+      "name": "Gemini Semantic Router",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1088,
+        560
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Filter Security & Prepare Updates').item.json;\nlet parsed = {};\ntry {\n  let text = $json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n  // Pulisci se Gemini restituisce un array invece di oggetto\n  const obj = JSON.parse(text);\n  parsed = Array.isArray(obj) ? obj[0] : obj;\n} catch (e) {\n  parsed = { intent: 'CAPTURE_NOTE' };\n}\n\nlet mode = 'capture_text';\nif (parsed.intent === 'TASK_ACTION') {\n  mode = 'complete_task_text';\n} else if (parsed.intent === 'ADD_CALENDAR') {\n  mode = 'add_calendar_event';\n} else if (parsed.intent === 'QUERY_AGENT') {\n  mode = 'query_agent';\n} else {\n  mode = 'capture_text';\n}\n\nreturn [{\n  json: {\n    update_id: prev.update_id,\n    mode,\n    chat_id: prev.chat_id,\n    message_id: prev.message_id,\n    text: prev.clean_text,\n    raw_text: prev.raw_text,\n    action: parsed.action || 'UPDATE_STATUS',\n    due_date: parsed.due_date || null,\n    target_status: parsed.target_status || null,\n    target_titles: parsed.target_titles || [],\n    target_indices: parsed.target_indices || [],\n    date: prev.date\n  }\n}];"
+      },
+      "id": "apply-semantic-intent",
+      "name": "Apply Semantic Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Fetch Telegram Messages & Callbacks": {
+      "main": [
+        [
+          {
+            "node": "Filter Security & Prepare Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Workflow Mode": {
+      "main": [
+        [
+          {
+            "node": "Query Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize to Canonical Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion - Update Status to Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Tasks for Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Event Parsing Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Active Tasks": {
+      "main": [
+        [
+          {
+            "node": "Query Recent Resources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Recent Resources": {
+      "main": [
+        [
+          {
+            "node": "Get Calendar Events for Agenda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Agent Context": {
+      "main": [
+        [
+          {
+            "node": "Gemini Answer Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Answer Query": {
+      "main": [
+        [
+          {
+            "node": "Sanitize Agent Markdown for Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize to Canonical Payload": {
+      "main": [
+        [
+          {
+            "node": "Call Core Ingestion Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Core Ingestion Engine": {
+      "main": [
+        [
+          {
+            "node": "Confirm Capture to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Update Status to Done": {
+      "main": [
+        [
+          {
+            "node": "Edit Telegram Card (Remove Button)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Telegram Card (Remove Button)": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback Query (Toast Alert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Tasks for Complete": {
+      "main": [
+        [
+          {
+            "node": "Resolve Task to Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Task to Complete": {
+      "main": [
+        [
+          {
+            "node": "If Task Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Task Found": {
+      "main": [
+        [
+          {
+            "node": "Notion - Update Task Properties",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Not Found Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Calendar Events for Agenda": {
+      "main": [
+        [
+          {
+            "node": "Format Agent Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Event Parsing Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini Parse Event Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Parse Event Details": {
+      "main": [
+        [
+          {
+            "node": "Format Calendar Event Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Calendar Event Payload": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Create Event": {
+      "main": [
+        [
+          {
+            "node": "Format Event Confirmation Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize Agent Markdown for Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Bot Answer to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Bot Answer to Telegram": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Bot Answer as Plain Text (Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Event Confirmation to Telegram": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Event Confirmation (Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Event Confirmation Message": {
+      "main": [
+        [
+          {
+            "node": "Send Event Confirmation to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Fetch Telegram Messages & Callbacks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Task Update Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send Completion Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Security & Prepare Updates": {
+      "main": [
+        [
+          {
+            "node": "Confirm Telegram Read (Ack)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Switch Workflow Mode",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini Semantic Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Semantic Router": {
+      "main": [
+        [
+          {
+            "node": "Apply Semantic Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Semantic Intent": {
+      "main": [
+        [
+          {
+            "node": "Switch Workflow Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Update Task Properties": {
+      "main": [
+        [
+          {
+            "node": "Format Task Update Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": {
+    "node:Every 3 Seconds": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "node:Every 30 Seconds": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    },
+    "node:Every 15 Seconds": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "pinData": {}
+}

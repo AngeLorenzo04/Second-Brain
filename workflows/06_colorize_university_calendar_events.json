@@ -1,0 +1,125 @@
+{
+  "id": "colorGcal06",
+  "name": "06 - [TOOLS] Colorize University Calendar Events",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-exec",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "returnAll": true,
+        "options": {},
+        "operation": "getAll",
+        "timeMin": "2026-09-01T00:00:00.000Z",
+        "timeMax": "2027-02-15T23:59:59.000Z"
+      },
+      "id": "gcal-get-events",
+      "name": "Get Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        420,
+        300
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "3R9AtU3D9QyRAf5p",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const summary = (item.json.summary || '').toLowerCase();\n  let color = null;\n  \n  if (summary.includes('inteligencia artificial') || summary.includes('30223')) {\n    color = '3'; // Viola\n  } else if (summary.includes('diseño y administración') || summary.includes('30239')) {\n    color = '6'; // Arancione\n  } else if (summary.includes('algoritmia') || summary.includes('30232')) {\n    color = '10'; // Verde\n  } else if (summary.includes('redes de computadores') || summary.includes('30211')) {\n    color = '9'; // Blu\n  } else if (summary.includes('ingeniería web') || summary.includes('30246')) {\n    color = '5'; // Giallo\n  } else if (summary.includes('festivo') || summary.includes('fiesta')) {\n    color = '8'; // Grigio\n  }\n  \n  if (color && item.json.colorId !== color) {\n    out.push({\n      json: {\n        eventId: item.json.id,\n        color: color,\n        summary: item.json.summary\n      }\n    });\n  }\n}\n\nreturn out;"
+      },
+      "id": "resolve-colors",
+      "name": "Assign Color to Course",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "eventId": "={{ $json.eventId }}",
+        "updateFields": {
+          "color": "={{ $json.color }}"
+        }
+      },
+      "id": "gcal-update-color",
+      "name": "Update Event Color",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        860,
+        300
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "3R9AtU3D9QyRAf5p",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Calendar Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Calendar Events": {
+      "main": [
+        [
+          {
+            "node": "Assign Color to Course",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Color to Course": {
+      "main": [
+        [
+          {
+            "node": "Update Event Color",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": {},
+  "pinData": {}
+}

@@ -1,0 +1,184 @@
+{
+  "id": "kX7dailyDigest03",
+  "name": "03 - [CRON] Daily Morning Digest & Interactive Inline Task Manager",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-morning",
+      "name": "Every Morning at 08:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "returnAll": true,
+        "options": {
+          "singleEvents": true,
+          "orderBy": "startTime"
+        },
+        "operation": "getAll",
+        "timeMin": "={{ new Date(new Date().setHours(0, 0, 0, 0)).toISOString() }}",
+        "timeMax": "={{ new Date(new Date().setHours(23, 59, 59, 999)).toISOString() }}"
+      },
+      "id": "gcal-get-today-events",
+      "name": "Get Today Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        420,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "3R9AtU3D9QyRAf5p",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\n        \"property\": \"Status\",\n        \"status\": {\n          \"does_not_equal\": \"Done\"\n        }\n      },\n      {\n        \"property\": \"Status\",\n        \"status\": {\n          \"does_not_equal\": \"Cancelled\"\n        }\n      }\n    ]\n  },\n  \"sorts\": [\n    {\n      \"property\": \"Due Date\",\n      \"direction\": \"ascending\"\n    }\n  ],\n  \"page_size\": 10\n}",
+        "options": {}
+      },
+      "id": "query-pending-tasks",
+      "name": "Query Incomplete Tasks from Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tasksRaw = $json.results || [];\n\n// 1. Estrai eventi Google Calendar di oggi\nlet calRaw = [];\ntry {\n  calRaw = $('Get Today Calendar Events').all() || [];\n} catch(e) {\n  calRaw = [];\n}\n\nconst calendarEvents = [];\nfor (const e of calRaw) {\n  const j = e.json || {};\n  if (!j.summary) continue;\n  \n  const startRaw = j.start?.dateTime || j.start?.date || '';\n  const endRaw = j.end?.dateTime || j.end?.date || '';\n  let timeStr = '';\n  if (startRaw.includes('T')) {\n    const s = new Date(startRaw).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' });\n    const en = endRaw.includes('T') ? new Date(endRaw).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' }) : '';\n    timeStr = en ? `${s} - ${en}` : s;\n  } else {\n    timeStr = 'Tutto il giorno';\n  }\n\n  const loc = j.location ? ` (${j.location})` : '';\n  calendarEvents.push(`• ⏰ *${timeStr}*: ${j.summary}${loc}`);\n}\n\nconst items = [];\n\n// Header Messaggio Buongiorno con Calendario\nlet introText = `☀️ *Buongiorno Angelo!*\\nEcco il tuo briefing quotidiano del Second Brain.\\n\\n`;\n\nif (calendarEvents.length > 0) {\n  introText += `📅 *I tuoi impegni di oggi in Calendario:*\\n` + calendarEvents.join('\\n') + `\\n\\n`;\n} else {\n  introText += `📅 *Nessun evento o lezione in calendario per oggi!* 🏖️\\n\\n`;\n}\n\nif (tasksRaw.length === 0) {\n  introText += `🚀 *Nessun task in sospeso su Notion.* Il tuo piano è libero per progetti strategici o riposo!`;\n  return [{\n    json: {\n      has_tasks: false,\n      chat_id: 5194909203,\n      text: introText,\n      reply_markup: { inline_keyboard: [] }\n    }\n  }];\n} else {\n  introText += `📋 *Hai ${tasksRaw.length} task da completare.* Eccoli di seguito con i pulsanti rapidi:`;\n  items.push({\n    json: {\n      has_tasks: true,\n      chat_id: 5194909203,\n      text: introText,\n      reply_markup: { inline_keyboard: [] }\n    }\n  });\n}\n\n// Card per ciascun Task\nfor (let i = 0; i < tasksRaw.length; i++) {\n  const task = tasksRaw[i];\n  const pageId = task.id.replace(/-/g, '');\n  const title = task.properties['Task Name']?.title[0]?.plain_text || 'Task senza nome';\n  const priority = task.properties['Priority']?.select?.name || 'P3 - Normal';\n  const dueDate = task.properties['Due Date']?.date?.start || 'Nessuna data';\n  const source = task.properties['Source']?.select?.name || 'Manuale';\n\n  let priorityEmoji = '🔵';\n  if (priority.includes('Critical')) priorityEmoji = '🔴';\n  else if (priority.includes('High')) priorityEmoji = '🟠';\n  else if (priority.includes('Normal')) priorityEmoji = '🟡';\n\n  const text = `${priorityEmoji} *Task ${i + 1}: ${title}*\\n📅 Scadenza: ${dueDate}\\n🏷️ Priorità: ${priority}\\n📌 Fonte: ${source}`;\n\n  items.push({\n    json: {\n      has_tasks: true,\n      chat_id: 5194909203,\n      text,\n      page_id: pageId,\n      reply_markup: {\n        inline_keyboard: [\n          [\n            {\n              text: \"✅ Segna come completato\",\n              callback_data: `done:${pageId}`\n            }\n          ]\n        ]\n      }\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "build-interactive-cards",
+      "name": "Build Interactive Cards & Keyboards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ $json.chat_id }},\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"parse_mode\": \"Markdown\",\n  \"reply_markup\": {{ JSON.stringify($json.reply_markup || { inline_keyboard: [] }) }}\n}",
+        "options": {}
+      },
+      "id": "send-task-telegram",
+      "name": "Send Interactive Card to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every Morning at 08:30": {
+      "main": [
+        [
+          {
+            "node": "Get Today Calendar Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today Calendar Events": {
+      "main": [
+        [
+          {
+            "node": "Query Incomplete Tasks from Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Incomplete Tasks from Notion": {
+      "main": [
+        [
+          {
+            "node": "Build Interactive Cards & Keyboards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Interactive Cards & Keyboards": {
+      "main": [
+        [
+          {
+            "node": "Send Interactive Card to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": {},
+  "pinData": {}
+}

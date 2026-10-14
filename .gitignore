@@ -1,0 +1,29 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Backups and binary dumps
+*.tar.gz
+*.tar
+*.zip
+n8n_backup.tar.gz
+
+# SQLite databases & runtime locks
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.journal
+
+# Temporary and Scratch files
+/scratch/
+/tmp/
+*.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
