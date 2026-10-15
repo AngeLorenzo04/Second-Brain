@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "url": "https://moodle.unizar.es/add/calendar/export_execute.php?userid=415565&authtoken=8266bc8d4833e3049207dcef4734f11674a67508&preset_what=all&preset_time=custom",
+        "url": "={{ $env.MOODLE_CALENDAR }}",
         "options": {}
       },
       "id": "fetch-moodle-feed",
@@ -67,7 +67,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "url": "=https://api.notion.com/v1/databases/{{ $env.TASKS_DB_ID }}/query",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -77,7 +77,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -125,7 +125,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -135,7 +135,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"parent\": { \"database_id\": \"3f5959844ee480fd9b5ee84b16b89cd6\" },\n  \"properties\": {\n    \"Task Name\": { \"title\": [{ \"text\": { \"content\": {{ JSON.stringify($json.title.slice(0, 100)) }} } }] },\n    \"Status\": { \"status\": { \"name\": \"To Do\" } },\n    \"Source\": { \"select\": { \"name\": \"Moodle\" } },\n    \"Source Ref\": { \"rich_text\": [{ \"text\": { \"content\": {{ JSON.stringify($json.uid) }} } }] },\n    \"Due Date\": { \"date\": { \"start\": {{ JSON.stringify($json.date) }} } }\n  }\n}",
+        "jsonBody": "={\n  \"parent\": { \"database_id\": \"{{ $env.TASKS_DB_ID }}\" },\n  \"properties\": {\n    \"Task Name\": { \"title\": [{ \"text\": { \"content\": {{ JSON.stringify($json.title.slice(0, 100)) }} } }] },\n    \"Status\": { \"status\": { \"name\": \"To Do\" } },\n    \"Source\": { \"select\": { \"name\": \"Moodle\" } },\n    \"Source Ref\": { \"rich_text\": [{ \"text\": { \"content\": {{ JSON.stringify($json.uid) }} } }] },\n    \"Due Date\": { \"date\": { \"start\": {{ JSON.stringify($json.date) }} } }\n  }\n}",
         "options": {}
       },
       "id": "create-notion-task",
@@ -182,7 +182,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.telegram.org/bot8946870311:AAHObfyS2cFxgzVVy36r37OG2L9CzoH-qlY/sendMessage",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -194,7 +194,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": 5194909203,\n  \"text\": {{ JSON.stringify(\"🔔 *Nuova Scadenza Moodle Rilevata!*\\n\\n📌 *Task:* \" + $json.title + \"\\n📅 *Scadenza:* \" + $json.date + \"\\n🎓 *Corso:* \" + $json.course + \"\\n\\nSalvato automaticamente nei tuoi Task di Notion e su Google Calendar!\") }},\n  \"parse_mode\": \"Markdown\"\n}",
+        "jsonBody": "={\n  \"chat_id\": {{ $env.TELEGRAM_USER_ID }},\n  \"text\": {{ JSON.stringify(\"🔔 *Nuova Scadenza Moodle Rilevata!*\\n\\n📌 *Task:* \" + $json.title + \"\\n📅 *Scadenza:* \" + $json.date + \"\\n🎓 *Corso:* \" + $json.course + \"\\n\\nSalvato automaticamente nei tuoi Task di Notion e su Google Calendar!\") }},\n  \"parse_mode\": \"Markdown\"\n}",
         "options": {}
       },
       "id": "notify-telegram-deadline",

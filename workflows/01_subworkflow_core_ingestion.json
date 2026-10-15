@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.notion.com/v1/databases/3f5959844ee480fd9b5ee84b16b89cd6/query",
+        "url": "=https://api.notion.com/v1/databases/{{ $env.TASKS_DB_ID }}/query",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -29,7 +29,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -67,7 +67,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AQ.Ab8RN6KjHBG84SxbIQrjkJqj8i_Xdw3o_-wkY4kZ-zw-oLMr3w",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={{ $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -97,7 +97,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Estrae la risposta di Gemini e crea il body esatto per Notion Inbox\nconst geminiResponse = $json;\nconst prep = $('Prepare LLM Prompt with Deduplication').first().json;\n\nlet parsed = {};\ntry {\n  const rawText = geminiResponse.candidates[0].content.parts[0].text;\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    title: prep.payload.title_hint || 'Nota catturata',\n    summary: prep.payload.raw_content.slice(0, 300),\n    para_category: 'None',\n    tasks: [],\n    resource: { is_resource: false, type: 'Article / Post', tags: [] }\n  };\n}\n\n// Costruzione payload esatto conforme allo schema reale di Notion Inbox\nconst notion_inbox_body = {\n  parent: { database_id: '3f5959844ee4806aa5acc90bbcf6066a' },\n  properties: {\n    'Name': {\n      title: [{ text: { content: (parsed.title || prep.payload.title_hint || 'Nuova Nota').slice(0, 200) } }]\n    },\n    'Status': {\n      status: { name: 'Inbox' }\n    },\n    'Source': {\n      select: { name: ['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook', 'Telegram Voice', 'Telegram Text'].includes(prep.meta.source) ? prep.meta.source : 'Manual' }\n    },\n    'Source ID': {\n      rich_text: [{ text: { content: String(prep.meta.source_id || '') } }]\n    },\n    'PARA Routing': {\n      select: { name: ['None', 'Task', 'Resource', 'Area', 'Project'].includes(parsed.para_category) ? parsed.para_category : 'None' }\n    },\n    'Raw Content': {\n      rich_text: [{ text: { content: String(prep.payload.raw_content || '').slice(0, 1990) } }]\n    },\n    'AI Summary': {\n      rich_text: [{ text: { content: String(parsed.summary || '').slice(0, 1990) } }]\n    },\n    'Captured At': {\n      date: { start: prep.meta.timestamp ? prep.meta.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10) }\n    }\n  }\n};\n\nif (prep.meta.source_url) {\n  notion_inbox_body.properties['Source URL'] = { url: prep.meta.source_url };\n}\n\nreturn {\n  json: {\n    meta: prep.meta,\n    payload: prep.payload,\n    distilled: parsed,\n    notion_inbox_body\n  }\n};"
+        "jsCode": "// Estrae la risposta di Gemini e crea il body esatto per Notion Inbox\nconst geminiResponse = $json;\nconst prep = $('Prepare LLM Prompt with Deduplication').first().json;\n\nlet parsed = {};\ntry {\n  const rawText = geminiResponse.candidates[0].content.parts[0].text;\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    title: prep.payload.title_hint || 'Nota catturata',\n    summary: prep.payload.raw_content.slice(0, 300),\n    para_category: 'None',\n    tasks: [],\n    resource: { is_resource: false, type: 'Article / Post', tags: [] }\n  };\n}\n\n// Costruzione payload esatto conforme allo schema reale di Notion Inbox\nconst notion_inbox_body = {\n  parent: { database_id: $env.INBOX_DB_ID },\n  properties: {\n    'Name': {\n      title: [{ text: { content: (parsed.title || prep.payload.title_hint || 'Nuova Nota').slice(0, 200) } }]\n    },\n    'Status': {\n      status: { name: 'Inbox' }\n    },\n    'Source': {\n      select: { name: ['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook', 'Telegram Voice', 'Telegram Text'].includes(prep.meta.source) ? prep.meta.source : 'Manual' }\n    },\n    'Source ID': {\n      rich_text: [{ text: { content: String(prep.meta.source_id || '') } }]\n    },\n    'PARA Routing': {\n      select: { name: ['None', 'Task', 'Resource', 'Area', 'Project'].includes(parsed.para_category) ? parsed.para_category : 'None' }\n    },\n    'Raw Content': {\n      rich_text: [{ text: { content: String(prep.payload.raw_content || '').slice(0, 1990) } }]\n    },\n    'AI Summary': {\n      rich_text: [{ text: { content: String(parsed.summary || '').slice(0, 1990) } }]\n    },\n    'Captured At': {\n      date: { start: prep.meta.timestamp ? prep.meta.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10) }\n    }\n  }\n};\n\nif (prep.meta.source_url) {\n  notion_inbox_body.properties['Source URL'] = { url: prep.meta.source_url };\n}\n\nreturn {\n  json: {\n    meta: prep.meta,\n    payload: prep.payload,\n    distilled: parsed,\n    notion_inbox_body\n  }\n};"
       },
       "id": "parse-gemini",
       "name": "Parse & Validate JSON",
@@ -121,7 +121,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -145,7 +145,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Estrae Tasks (filtrando i duplicati) e Resources\nconst inboxPageId = $json.id;\nconst parsed = $('Parse & Validate JSON').first().json;\n\nconst items = [];\n\nif (parsed.distilled.tasks && Array.isArray(parsed.distilled.tasks)) {\n  for (const t of parsed.distilled.tasks) {\n    if (t.is_duplicate) {\n      continue;\n    }\n\n    const taskSource = (parsed.meta.source && parsed.meta.source.startsWith('Telegram')) ? 'Telegram' : (['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook'].includes(parsed.meta.source) ? parsed.meta.source : 'Manual');\n    const taskBody = {\n      parent: { database_id: '3f5959844ee480fd9b5ee84b16b89cd6' },\n      properties: {\n        'Task Name': {\n          title: [{ text: { content: t.task_name.slice(0, 200) } }]\n        },\n        'Status': {\n          status: { name: 'To Do' }\n        },\n        'Source': {\n          select: { name: taskSource }\n        },\n        'Source Ref': {\n          rich_text: [{ text: { content: String(parsed.meta.source_id || '') } }]\n        }\n      }\n    };\n    if (t.due_date && /^\\d{4}-\\d{2}-\\d{2}/.test(t.due_date)) {\n      taskBody.properties['Due Date'] = { date: { start: t.due_date } };\n    }\n    items.push({\n      entity_type: 'task',\n      body: taskBody\n    });\n  }\n}\n\nif (parsed.distilled.resource && parsed.distilled.resource.is_resource) {\n  const resBody = {\n    parent: { database_id: '3f5959844ee480179484cb34a9e09435' },\n    properties: {\n      'Title': {\n        title: [{ text: { content: parsed.distilled.title.slice(0, 200) } }]\n      },\n      'Type': {\n        select: { name: parsed.distilled.resource.type || 'Article / Post' }\n      },\n      'Summary / Notes': {\n        rich_text: [{ text: { content: String(parsed.distilled.summary || '').slice(0, 1990) } }]\n      }\n    }\n  };\n  if (parsed.meta.source_url) {\n    resBody.properties['URL'] = { url: parsed.meta.source_url };\n  }\n  if (parsed.distilled.resource.tags && Array.isArray(parsed.distilled.resource.tags)) {\n    resBody.properties['Tags'] = {\n      multi_select: parsed.distilled.resource.tags.map(tag => ({ name: String(tag) }))\n    };\n  }\n  items.push({\n    entity_type: 'resource',\n    body: resBody\n  });\n}\n\nif (items.length === 0) {\n  return [{ json: { status: 'no_child_entities', inbox_id: inboxPageId } }];\n}\n\nreturn items.map(i => ({ json: i }));"
+        "jsCode": "// Estrae Tasks (filtrando i duplicati) e Resources\nconst inboxPageId = $json.id;\nconst parsed = $('Parse & Validate JSON').first().json;\n\nconst items = [];\n\nif (parsed.distilled.tasks && Array.isArray(parsed.distilled.tasks)) {\n  for (const t of parsed.distilled.tasks) {\n    if (t.is_duplicate) {\n      continue;\n    }\n\n    const taskSource = (parsed.meta.source && parsed.meta.source.startsWith('Telegram')) ? 'Telegram' : (['Manual', 'Moodle', 'GitHub', 'Gmail', 'Outlook'].includes(parsed.meta.source) ? parsed.meta.source : 'Manual');\n    const taskBody = {\n      parent: { database_id: $env.TASKS_DB_ID },\n      properties: {\n        'Task Name': {\n          title: [{ text: { content: t.task_name.slice(0, 200) } }]\n        },\n        'Status': {\n          status: { name: 'To Do' }\n        },\n        'Source': {\n          select: { name: taskSource }\n        },\n        'Source Ref': {\n          rich_text: [{ text: { content: String(parsed.meta.source_id || '') } }]\n        }\n      }\n    };\n    if (t.due_date && /^\\d{4}-\\d{2}-\\d{2}/.test(t.due_date)) {\n      taskBody.properties['Due Date'] = { date: { start: t.due_date } };\n    }\n    items.push({\n      entity_type: 'task',\n      body: taskBody\n    });\n  }\n}\n\nif (parsed.distilled.resource && parsed.distilled.resource.is_resource) {\n  const resBody = {\n    parent: { database_id: $env.RESOURCES_DB_ID },\n    properties: {\n      'Title': {\n        title: [{ text: { content: parsed.distilled.title.slice(0, 200) } }]\n      },\n      'Type': {\n        select: { name: parsed.distilled.resource.type || 'Article / Post' }\n      },\n      'Summary / Notes': {\n        rich_text: [{ text: { content: String(parsed.distilled.summary || '').slice(0, 1990) } }]\n      }\n    }\n  };\n  if (parsed.meta.source_url) {\n    resBody.properties['URL'] = { url: parsed.meta.source_url };\n  }\n  if (parsed.distilled.resource.tags && Array.isArray(parsed.distilled.resource.tags)) {\n    resBody.properties['Tags'] = {\n      multi_select: parsed.distilled.resource.tags.map(tag => ({ name: String(tag) }))\n    };\n  }\n  items.push({\n    entity_type: 'resource',\n    body: resBody\n  });\n}\n\nif (items.length === 0) {\n  return [{ json: { status: 'no_child_entities', inbox_id: inboxPageId } }];\n}\n\nreturn items.map(i => ({ json: i }));"
       },
       "id": "split-entities",
       "name": "Extract Tasks & Resources (Skip Duplicates)",
@@ -225,7 +225,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -260,7 +260,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer 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"
+              "value": "=Bearer {{ $env.NOTION_API_KEY }}"
             },
             {
               "name": "Content-Type",

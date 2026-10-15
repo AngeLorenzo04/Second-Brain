@@ -33,11 +33,17 @@ else
     if docker ps -a -q -f "name=^n8n$" | grep -q .; then
         docker start n8n >/dev/null
     else
+        ENV_ARG=""
+        if [ -f "$PROJECT_ROOT/.env" ]; then
+            ENV_ARG="--env-file $PROJECT_ROOT/.env"
+        fi
         docker run -d \
             --name n8n \
             --restart always \
             -p 5678:5678 \
+            $ENV_ARG \
             -v "$LOCAL_N8N_DIR:/home/node/.n8n" \
+            -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
             -e GENERIC_TIMEZONE="Europe/Rome" \
             -e TZ="Europe/Rome" \
             -e N8N_RUNNERS_GRANT_TOKEN_TTL=300 \
