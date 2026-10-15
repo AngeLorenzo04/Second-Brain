@@ -5,11 +5,18 @@ sudo docker rm -f n8n 2>/dev/null || true
 rm -f "$HOME"/.n8n/database.sqlite-wal "$HOME"/.n8n/database.sqlite-shm "$HOME"/.n8n/crash.journal
 sudo chown -R 1000:1000 "$HOME"/.n8n
 
+ENV_ARG=""
+if [ -f "$HOME"/.env ]; then
+  ENV_ARG="--env-file $HOME/.env"
+fi
+
 sudo docker run -d \
   --name n8n \
   --restart always \
   -p 5678:5678 \
+  $ENV_ARG \
   -v "$HOME"/.n8n:/home/node/.n8n \
+  -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
   -e N8N_RUNNERS_GRANT_TOKEN_TTL=300 \
   -e N8N_RUNNERS_TASK_TIMEOUT=120 \
   -e N8N_RUNNERS_MAX_CONCURRENCY=10 \

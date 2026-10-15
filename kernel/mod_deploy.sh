@@ -52,6 +52,9 @@ echo -e "\n${C_YELLOW}3/5${C_RESET} 📦 Trasferimento database e credenziali cr
 scp_to_vps "$TEMP_DB" "$VPS_DB" >/dev/null
 scp_to_vps "$LOCAL_CONFIG" "$VPS_N8N_DIR/config" >/dev/null
 scp_to_vps "$PROJECT_ROOT/start_n8n.sh" "/home/$VPS_USER/start_n8n.sh" >/dev/null
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    scp_to_vps "$PROJECT_ROOT/.env" "/home/$VPS_USER/.env" >/dev/null
+fi
 rm -f "$TEMP_DB"
 echo -e "    ${C_GREEN}✔${C_RESET} File trasferiti correttamente su $VPS_IP."
 
