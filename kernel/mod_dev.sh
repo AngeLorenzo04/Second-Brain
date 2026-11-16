@@ -27,31 +27,26 @@ rm -f "$LOCAL_N8N_DIR/crash.journal" 2>/dev/null || true
 
 # 3. Avvio container locale
 echo -e "\n${C_YELLOW}3/3${C_RESET} ⚡ Avvio n8n sul PC locale (http://localhost:5678)..."
-if is_local_running; then
-    echo -e "    ${C_GREEN}✔${C_RESET} n8n locale è già attivo e in esecuzione."
-else
-    if docker ps -a -q -f "name=^n8n$" | grep -q .; then
-        docker start n8n >/dev/null
-    else
-        ENV_ARG=""
-        if [ -f "$PROJECT_ROOT/.env" ]; then
-            ENV_ARG="--env-file $PROJECT_ROOT/.env"
-        fi
-        docker run -d \
-            --name n8n \
-            --restart always \
-            -p 5678:5678 \
-            $ENV_ARG \
-            -v "$LOCAL_N8N_DIR:/home/node/.n8n" \
-            -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
-            -e GENERIC_TIMEZONE="Europe/Rome" \
-            -e TZ="Europe/Rome" \
-            -e N8N_RUNNERS_GRANT_TOKEN_TTL=300 \
-            -e N8N_RUNNERS_TASK_TIMEOUT=120 \
-            docker.n8n.io/n8nio/n8n >/dev/null
-    fi
-    echo -e "    ${C_GREEN}✔${C_RESET} Container n8n locale avviato."
+docker rm -f n8n 2>/dev/null || true
+ENV_ARG=""
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    ENV_ARG="--env-file $PROJECT_ROOT/.env"
 fi
+docker run -d \
+    --name n8n \
+    --restart always \
+    -p 5678:5678 \
+    $ENV_ARG \
+    -v "$LOCAL_N8N_DIR:/home/node/.n8n" \
+    --dns 8.8.8.8 \
+    --dns 1.1.1.1 \
+    -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
+    -e GENERIC_TIMEZONE="Europe/Rome" \
+    -e TZ="Europe/Rome" \
+    -e N8N_RUNNERS_GRANT_TOKEN_TTL=300 \
+    -e N8N_RUNNERS_TASK_TIMEOUT=120 \
+    docker.n8n.io/n8nio/n8n >/dev/null
+echo -e "    ${C_GREEN}✔${C_RESET} Container n8n locale avviato con variabili d'ambiente aggiornate."
 
 echo -e "\n${C_GREEN}${C_BOLD}🎉 MODALITÀ SVILUPPO PRONTA!${C_RESET}"
 echo -e "👉 Apri nel tuo browser: ${C_CYAN}${C_BOLD}http://localhost:5678${C_RESET}"

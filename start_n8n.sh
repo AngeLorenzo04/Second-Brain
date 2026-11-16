@@ -14,6 +14,8 @@ sudo docker run -d \
   --name n8n \
   --restart always \
   -p 5678:5678 \
+  --dns 8.8.8.8 \
+  --dns 1.1.1.1 \
   $ENV_ARG \
   -v "$HOME"/.n8n:/home/node/.n8n \
   -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
